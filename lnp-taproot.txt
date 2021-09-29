@@ -18,8 +18,9 @@ They each have keys A and B, and revocable secrets RA(n) and RB(n),
 generated as usual. In addition, we have a second level revocable secret,
 seeded from RA(n) and RB(n); this is RA2(n,i) and RB2(n,i).
 
-Calculate the base channel key P as musig(A,B). We'll produce subkeys
-from this via non-hardened HD paths, eg P/4/5/6.
+Calculate the base channel key P as musig(A,B). We'll talk about subkeys
+of this, eg P/4/5/6, which are calculated by taking subkeys of the input
+and then reapplying musig, eg P/4/5/6 = musig(A/4/5/6, B/4/5/6).
 
 We'll use musig2 to sign for these keys, that is both parties
 will pre-share two nonce points each, NA1, NA2, NB1, NB2, and the
@@ -76,7 +77,8 @@ outputs, one for Alice's balance and one for Bob's balance (omitting a
 zero balance).
 
 We count the number of balance updates, starting at 0, and call it "n".
-"n" is encoded in the locktime of the balance update transaction.
+"n" is encoded in the locktime and nsequence of the balance update
+transaction.
 
 Alice's balance is paid to an address with internal pubkey P/1/n/0
 and a script path of "<A/1/n/0> CHECKSIGVERIFY <D> CSV" where D is 
@@ -135,6 +137,13 @@ spending Alice's balance.
 The inflight transaction spends Alice's balance. Alice generates a
 partial signature using Bob's PAY nonce pair, and sends it to Bob,
 committing to the update.
+
+The inflight transation's locktime is set to the current block
+height. This enables brute force searching for the locktime of any
+inflight PTLCs (so that in a penalty scenario when the other party posts
+an out of date inflight transaction, you can search through a small
+number of possible timeout values simply by not sending any PTLCs with
+a timeout more that L blocks in the future).
 
 We count the number of times Alice's inflight transaction is updated for
 a given balance transaction and call it "i".
@@ -197,6 +206,13 @@ channel private key and first level revocation secrets offline).
 References
 ==========
 
-tba
-
+ * musig
+ * musig2
+ * adaptor sigs
+ * bip32
+ * fast forwards [ZmnSCPxj]
+    https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/001986.html
+    https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-May/003043.html
+ * revocable signatures [LLFourn]
+    https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/002785.html
 
