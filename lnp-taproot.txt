@@ -383,6 +383,11 @@ transactions that include htlc outputs is enough to ensure that all htlc
 records can be forgotten without risking any part of the channel balance
 being unclaimable.
 
+This does not support option_static_remotekey, but compensates for that
+by allowing balances to be recovered with only the channel setup data
+even if all revocation data is lost.
+
+
 References
 ==========
 
