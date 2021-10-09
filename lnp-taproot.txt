@@ -8,37 +8,63 @@ Goals
 5. Minimise latency when refunding payments
 6. Support offline receiving
 7. Minimise on-chain footprint
+8. Minimise ability for third-parties to analyse
 
 Setup
 =====
 
-We have two participants in the channel, Alice and Bob.
+We have two participants in the channel, Alice and Bob. They each have
+bip32 private keys, a and b, and share the corresponding xpubs A and B
+with each other.
 
-They each have keys A and B, and revocable secrets RA(n) and RB(n),
-generated as usual. In addition, we have a second level revocable secret,
-seeded from RA(n) and RB(n); this is RA2(n,i) and RB2(n,i).
+Musig
+-----
 
-Calculate the base channel key P as musig(A,B). We'll talk about subkeys
-of this, eg P/4/5/6, which are calculated by taking subkeys of the input
-and then reapplying musig, eg P/4/5/6 = musig(A/4/5/6, B/4/5/6).
+We will use musig to combine the keys, where P = musig(A,B) = H(A,B,1)*A
++ H(A,B,2)*B. We'll talk about subkeys of P, eg P/4/5/6, which are
+calculated by taking subkeys of the input and then applying musig,
+eg P/4/5/6 = musig(A/4/5/6, B/4/5/6). (Note that we don't use hardened
+paths anywhere)
 
-We'll use musig2 to sign for these keys, that is both parties
-will pre-share two nonce points each, NA1, NA2, NB1, NB2, and the
-nonce will be calculated as: R=(NA1+NB1)+b(NA2+NB2), where
-b=Hash(NA1,NA2,NB1,NB2).
+Musig2
+------
 
-A partial sig by A for a message m with nonce R as above is calculated as:
+We'll use musig2 to sign for these keys, that is both parties will
+pre-share two nonce points each, NA1, NA2, NB1, NB2, and the nonce will be
+calculated as: R=(NA1+NB1)+k(NA2+NB2), where k=Hash(P,NA1,NA2,NB1,NB2,m),
+where P is the pubkey that will be signing and m is the message to be
+signed. Note that NA1, NA2, NB1, NB2 can be calculated and shared prior
+to knowing what message will be signed.
 
-    sa = na1+b*na2+H(R,A+B,m)*a
+The partial sig by A for a message m with nonce R as above is calculated as:
 
-where na1, na2, and a are the secrets generating NA1 NA2 and A respectively.
-Calculating the partial signature for B,
+    sa = (na1+k*na2) + H(R,A+B,m)*a
 
-    sb = nb1+b*nb2+H(R,A+B,m)*b
+where na1, na2, and a are the secrets generating NA1, NA2 and A respectively.
+Calculating the corresponding partial signature for B,
+
+    sb = (nb1+k*nb2) + H(R,A+B,m)*b
 
 gives a valid signature (R,sa+sb) for (A+B):
 
-    (sa+sb)G = R+H(R,A+B,m)*(A+B)
+    (sa+sb)G = R + H(R,A+B,m)*(A+B)
+
+Note that BIP340 sepcifies x-only pubkeys, so A+B and R implicitly have
+even y, however since those values are caluclated via musig and musig2
+respectively, this cannot be ensured in advance. Instead, if we find:
+
+    H(A,B,1)*A + H(A,B,2)*B
+
+does not have even y, we calculate:
+
+    P = (-H(A,B,1))*A + (-H(A,B,2))*B
+
+instead, which will have even y. Similarly, if (NA1+NB1+k(NA2+NB2)) does
+not have even y, when signing, we replace each partial nonce by its negation,
+eg: sa = -(na1+k*na2) + H(R,A+B,m).
+
+Adaptor Sigs
+------------
 
 An adaptor signature for P for secret X is calculated as:
 
@@ -52,21 +78,35 @@ so that (R+X,s+x) is a valid signature by P of m, and the preimage for
 X can be calculated as the difference between the published sig and the
 adaptor sig, x=(s+x)-(s).
 
-Each node preshares two of these nonce pairs:
+Note that if R+X does not have even Y, we will need to negate both R and X,
+and the recovered secret preimage will be -x instead of x.
 
-  BAL: used for updating the balances; calculated from the revocable
-       secret
-  PAY: used for adding a new HTLC/PTLC; deterministically generated
-       (not revocable)
+Revocable Secrets
+-----------------
 
-Once each pair is used up, a new one is generated and transmitted.
-Multiple nonces may be generated and shared in advance to improve latency.
+Alice and Bob have shachain secrets RA(n) and RB(n) respectively,
+and second level shachain secrets RA2(n,i) and RB2(n,i), with n and i
+counting up from 0 to a maximum.
+
+Summary
+=======
+
+We'll introduce four layers of transactions:
+
+ 1. The funding transaction - used to establish the channel, provides
+    the utxo backing the channel while the channel is open.
+ 2. The balance transaction - tracks the funding transaction, contains
+    a "balance" output for each of the participants.
+ 3. The inflight transactions - spends a balance output from the balance
+    transaction and provides outputs for any inflight htlc/ptlc transactions.
+ 4. Layered transactions - spends inflight htlc/ptlc outputs by revealing
+    the preimage, while still allowing for the penalty path.
 
 Funding transaction
 ===================
 
-The funding transaction pays to P/0/i via taproot, where i starts at
-0 and increases any time the funding transaction is updated onchain
+The funding transaction simply pays to P/0/i via taproot, where i starts
+at 0 and increases any time the funding transaction is updated onchain
 (eg when splicing funds in or out).
 
 Balance transaction
@@ -74,145 +114,257 @@ Balance transaction
 
 The balance transaction spends the funding transaction, and has two
 outputs, one for Alice's balance and one for Bob's balance (omitting a
-zero balance).
+zero/dust balance).
 
 We count the number of balance updates, starting at 0, and call it "n".
-"n" is encoded in the locktime and nsequence of the balance update
-transaction.
+"n" is encoded in the transaction locktime and the input nsequence, so
+if a balance transaction appears on chain, "n" can be decoded from the
+nsequence and locktime.
 
 Alice's balance is paid to an address with internal pubkey P/1/n/0
-and a script path of "<A/1/n/0> CHECKSIGVERIFY <D> CSV" where D is 
+and a script path of "<A/1/n> CHECKSIGVERIFY <D> CSV" where D is
 Alice's to_self_delay. Bob's balance is similar, with internal pubkey
 P/1/n/1.
 
-When Alice proposes a new balance transaction, the process is as follows:
+In order to update to a new balance transaction, the process is as follows.
+First, nonces are exchanged in advance:
 
   Alice:
-    Generates nonce pair, RA. Combines with Bob's BAL nonce pair.
-    Generates partial signature for nonce (RA, BAL_Bob) for the
-    transaction. Sends RA and the partial signature to Bob.
+    Generates a nonce pair NA1, NA2 derived from RA(n). Shares this with
+    Bob.
   Bob:
-    Checks the partial signature is valid for his (RA, BAL_Bob). Updates
-    to the new balance transaction. Generates a nonce pair, RB, and
-    gnerates a partial signature for the balance transaction for nonce
-    (RB, BAL_Alice). Sends RB, the partial signature to Alice. Generates
-    a new BAL_Bob. Revokes the previous BAL_Bob secret and sends the
-    new BAL_Bob to Alice.
+    Generates a nonce pair NB1, NB2 derived from RB(n). Shares this with
+    Alice.
+
+Then, presuming Alice initiates the update:
+
   Alice:
-    Checks the partial signature is valid for her (RB, BAL_Bob). Updates
-    to the new balance transaction. Checks the secret revocation info
-    is correct and stores it. Generates a new BAL_Alice. Revokes the
-    previous BAL_Alice secret and sends the new BAL_Alice to Bob.
+    Generates deterministic nonce pair, DA1, DA2. Combines this with
+    Bob's NB1, NB2 nonce pair.  Generates partial signature for nonce
+    (DA, NB) for the transaction. Sends DA1 and DA2 and the partial
+    signature to Bob.
+
+  Bob:
+    Checks the partial signature is valid. Updates to the new balance
+    transaction. Generates a nonce pair, DB1, DB2, and gnerates a partial
+    signature for the balance transaction for nonce (NA, DB). Sends DB1,
+    DB2, and the partial signature to Alice. Generates a new revocable
+    secret RB(n+1). Revokes the previous secret RB(n) and sends the
+    details of both to Alice.
+
+  Alice:
+    Checks the partial signature is valid. Updates to the new balance
+    transaction. Checks the secret revocation info is correct and stores
+    it. Generates a new revocable secret RA(n+1). Revokes the previous
+    secret RA(n) and sends the details of both to Bob.
+
   Bob:
     Checks the secret revocation info is correct an stores it.
 
-Note that both Alice and Bob have the same balance transaction here (with
-the same txid) but have different signatures for it (differing wtxid).
+This means that both Alice and Bob have the same balance transaction here
+(with the same txid) but have different signatures for it (and thus
+differing wtxids).
 
-Note that if an Bob publishes the signature for an old state, then the
+Because updating the balance transaction involves two round trips
+before Bob can be sure Alice cannot use the old state, we move all the
+transaction information to the inflight transactions, which we will be
+able to update immediately, without requiring a round trip at all.
+
+Note that if Bob publishes the signature for an old state, then the
 signature is:
 
-   sG = (RA1+BAL_Bob1)+b(RA2+BAL_Bob2) + H(R,A+B,m)(A+B)
+   s = ((DA1+NB1) + k(DA2+NB2)) + H(R,A+B,m)(a+b)
 
-but Alice can calculate the secrets for both RA1/RA2 (she generated
-those herself in the first place), and BAL_Bob1/BAL_Bob2 (she has the
-secret revocation information, and verified it), which allows her to
-calculate Bob's private key using modular arithmetic:
+but Alice can calculate the secrets for both DA1 and DA2 (she generated
+those deterministically herself in the first place), and NB1 and NB2 (she
+has the secret revocation information, and verified that it correctly
+generated the nonces Bob was using), which allows her to calculate Bob's
+private key using modular arithmetic:
 
-   b = H(R,P,m) / (s - (ra1+bal_bob1) - b(ra2+bal_bob2)) - a
+   b = H(R,P,m) / (s - (DA1+NB1) - b(DA2+NB2)) - a
 
 which means she can then directly sign without Bob's assistance, allowing
 her to claim any funds.
 
-Inflight Transactions
-=====================
+Inflight and Layered Transactions
+=================================
 
-The above obviously only allows updating balances, not committing to HTLCs
-or PTLCs. This is because the above also has two round-trips before Bob
-can be sure the update is committed to, and we'd like lower latency for
-forwarding payments. So we add two transactions, one for inflight payments
-to Alice, spending Bob's balance; and one for inflight payments to Bob,
-spending Alice's balance.
+We construct two inflight transactions on top of the current balance
+transaction, one spending Alice's balance, and one spending Bob's balance.
 
-The inflight transaction spends Alice's balance. Alice generates a
-partial signature using Bob's PAY nonce pair, and sends it to Bob,
-committing to the update.
+We will use "i" to represent the number of times a given inflight
+transaction has been updated for the nth update to the balance
+transaction.
 
-The inflight transation's locktime is set to the current block
-height. This enables brute force searching for the locktime of any
-inflight PTLCs (so that in a penalty scenario when the other party posts
-an out of date inflight transaction, you can search through a small
-number of possible timeout values simply by not sending any PTLCs with
-a timeout more that L blocks in the future).
+At any time Alice can update the inflight transaction spending her balance
+to transfer funds towards Bob, either by updating the balances directly,
+or adding a htlc/ptlc entry to conditionally transfer funds to Bob. (And
+conversely for Bob)
 
-We count the number of times Alice's inflight transaction is updated for
-a given balance transaction and call it "i".
+We will define RP=musig(A/2/n/i, RB2(n,i)).
 
 The inflight transaction spending Alice's balance can have multiple
 types of outputs:
 
- * Alice's remaining balance: pays directly to A/2/n/i/0
+ * Alice's remaining balance: pays directly to A/2/n/i
 
- * Bob's remaining balances: pays to P/2/n/i/0 with script path
-   "<B/2/n/i/0> CHECKSIGVERIFY <D> CSV"
+ * Bob's remaining balances: pays to RP/2 with script path
+   "<B/2/n/i> CHECKSIGVERIFY <D> CSV"
 
- * A HTLC paying to Bob: pays to P/2/n/i/k with script paths:
-   + "<RB(n,i)/2/k/0> CHECKSIGVERIFY IFDUP IF LENGTH 32 EQUALVERIFY HASH160 <X> EQUALVERIFY CODESEPARATOR ENDIF <A/2/n/i/k/0> CHECKSIG"
+ * An htlc paying to Bob: pays to RP/2/k with script paths:
+   + "LENGTH 32 EQUALVERIFY HASH160 <X> EQUALVERIFY <B/2/n/i/k> CHECKSIGVERIFY <A/2/n/i/k> CHECKSIG"
    + "<A/2/n/i/k/1> CHECKSIGVERIFY <T> CLTV"
 
- * A PTLC paying to Bob: pays to P/2/n/i/k with script paths:
-   + "<A/2/n/i/k/0> CHECKSIGVERIFY <RB(n,i)/2/k/0> CHECKSIG NOTIF <T> CLTV ENDIF"
+ * A ptlc paying to Bob: pays to RP/2/k with script paths:
+   + "<B/2/n/i/k> CHECKSIG NOTIF <T> CLTV DROP ENDIF <A/2/n/i/k> CHECKSIG"
 
-Note that both PAY_Bob and the second level revocable secret RB(n,i)
-need to be updated for each new inflight transaction.
+Any outputs that would be zero or dust are not included.
 
-Each HTLC or PTLC present in the inflight transacion is assigned an
-index k, starting at 1, ordered chronologically.
+Note that we number each currently inflight transaction by "k",
+starting at 0. The same htlc/ptlc may have a different value for k
+between different inflight transactions.
 
-Alice can unilaterally do the following:
+The inflight transation's locktime is set to the current block
+height. This enables brute force searching for the locktime of any
+inflight ptlcs (so that in a penalty scenario when the other party posts
+an out of date inflight transaction, you can search through a small
+number of possible timeout values simply by not sending any ptlcs with
+a timeout more that L blocks in the future).
+
+The balance input's nsequence is used to encode the value of the lower
+24 bits of i in the same way the balance transaction's fund input's
+nsequence encodes the upper 24 bits of n.
+
+The layered transaction will spend the htlc/ptlc outputs, with an
+ANYONECANPAY|SINGLE signature by Alice using the A/2/n/i/k path.
+The output committed to is:
+
+ * pays to RP/3/k with script path:
+   + <B/3/n/i/k> CHECKSIGVERIFY <D> CSV
+
+with no absolute or relative locktime.
+
+To update the inflight transaction spending Alice's balance as well as
+any dependent layered transactions, the process is as follows:
+
+  Bob:
+    Generates a second level revocable secret, RB2(n,i) and sends Alice
+    the corresponding point, PB2. Calculates a nonce pair, NB1, NB2, and
+    sends that to Alice. This is done in advance.
+
+  Alice:
+    Calculates the new inflight transaction. Calculates new nonces NA1,
+    NA2, and partially signs the spend of her balance via the key path,
+    with musig2 nonces NA1, NB1, NA2, NB2. For each inflight htlc,
+    Alice provides a signature via A/2/n/i/k. For each inflight ptlc,
+    Alice provides an adaptor signature via the A/2/n/i/k/0 path that
+    is conditional on the ptlc's point.
+
+  Bob:
+    Bob verifies the new proposed inflight state and each of the
+    signatures. Bob may now rely on the new state. Bob revokes their
+    prior secret, RB2(n, i-1), and sends a new point/nonce pair (PB2',
+    NB1', NB2') to Alice to prepare for the next round.
+
+Note that Bob could stream multiple point/nonce pairs in advance,
+allowing Alice to do multiple inflight tx updates within the time taken
+for a roundtrip.
+
+Alice can unilaterally do the following safely:
 
  1. transfer from Alice's balance to Bob's balance
- 2. accept that a HTLC or PTLC succeeded, removing the HTLC or PTLC and
-    moving the funds associated with it to Bob's balance
- 3. introduce a HTLC or PTLC, spending funds from Alice's balance
+ 2. accept that a htlc/ptlc succeeded, removing the corresponding output
+    and allocating the funds associated with it directly to Bob's balance
+ 3. introduce a htlc/ptlc, spending funds from Alice's balance
 
-All of these require Alice to send a partial signature for the new spend
-of the balance transaction to Bob.
+However refunding/cancelling a htlc/ptlc requires a two-phase commit
+with 1.5 round trips:
 
-For any PTLCs or HTLCs included in the new transaction, Alice needs
-to send a signature using A/2/n/i/k/0, with ANYONECANPAY|SINGLE flags,
-paying to an output with internal pubkey musig(A, RB(n,i))/3/k and script
-path "<B/3/n/i/k> CHECKSIGVERIFY <D> CSV ENDIF", with no locktime and
-appropriate nSequence. For HTLCs, this is a plain signature via the
-CODESEPARATOR path. For PTLCs this is an adaptor signature, requiring
-the PTLC point preimage to be revealed.
-
-Refunding/cancelling a HTLC or PTLC requires a two-phase commit with
-1.5 round trips:
-
- - Bob proposes refunding a HTLC/PTLC
+ - Bob proposes refunding a htlc/ptlc
  - Alice agrees and sends a partial signature for the new transaction
-   with the HTLC/PTLC funds transferred back to her balance,
- - Bob records the new transaction, and revokes the second layer secrets
-   RB(n,j) j<i.
+   with the htlc/ptlc funds transferred back to her balance,
+ - Bob records the new transaction, and revokes the earlier second
+   level secret RB2(n, i-1).
  - Alice verifies the revocation, and can safely treat the funds as
-   refunded.
+   refunded (and thus refund back to the original payer, eg).
 
 The advantage of doing this over negotiating a new balance transaction
 is that only the second level revocation secrets need to be online,
 allowing for operation by semi-offline lightning nodes (ie, having the
-channel private key and first level revocation secrets offline).
+channel private key and first level revocation secrets offline). Such
+semi-offline nodes risk losing funds in the "inflight" transaction
+(either by revealing the second level revocation secrets or by simply
+data loss of the current inflight/layered transactions) but do not risk
+losing or spending funds in their own output of the balance transaction.
+
+This means the funds locked in Alice's balance can be spent in the
+following ways:
+
+ * Alice can claim them directly if Bob does not post the inflight
+   transaction before the delay expires, via the script balance output's
+   script path. Alice gets the entire balance in this case.
+
+ * Bob can post a revoked inflight transaction, for which Alice knows the
+   secret for RB(n,i). In this case Alice recovers the value of i from
+   the nsequence (using brute force for the upper bits if she has
+   provided more than 16M updates of the inflight tx for any given
+   balance transaction), and then calculates the secret key for PB,
+   and hence PB/2/k and PB/3/k, at which point she can claim every
+   output via a key path spend, even if Bob posts some or all of the
+   layered transactions. Alice gets the entire balance in this case
+   (though spends more on fees).
+
+ * Bob can post a current inflight transaction, along with layered
+   transactions for any of the inflight htlc/ptlcs for which he knows the
+   corresponding preimage, allowing Alice to recover the preimages from
+   the on-chain spends immediately. Alice can claim her balance output and
+   any timed out funds immediately as well. Bob can finish claiming his
+   balance and any claimed htlc/ptlc funds after the delay has finished.
+
+Note that Bob never shares his signature to spend Alice's balance prior
+to posting the inflight transaction, so Alice can never post an inflight
+transaction that spends her own balance.
+
+Misc
+====
+
+To allow splicing in/out, it may be important to maintain multiple
+concurrent funding transactions (paying to P/0/i and P/0/i+1 eg),
+which then requires maintaining multiple current balance transactions
+(paying to P/1/n/* and P/1/n+1/x eg) and likewise multiple current
+inflight/layered transactions. This will require ensuring the states
+for all those transactions are synchoronised when verifying upates,
+and requires sharing multiple nonces for signing (eg RA(n) and RA(n+1)
+and RB2(n,i), and RB2(n+1,i)).
+
+Fees for the balance and inflight transactions must be considered upfront,
+and paid for from the channel balance (or perhaps via additional anchor
+outputs that allocate more than the dust threshold and are immediately
+spendable). Fees for the layered transactions however can (and must)
+be provided by whoever is attempting to claim the funds.
+
+Bob having a current inflight transaction spending Alice's balance is
+advantageous to Alice as Bob posting the inflight transaction allows
+her to immediately claim her balance, rather than having to wait for
+the delay to complete.
 
 References
 ==========
 
- * musig
- * musig2
- * adaptor sigs
- * bip32
+Hopefully the above includes enough explanation to be understood on its own,
+but here's references for a bunch of the concepts.
+
+ * musig: https://blockstream.com/2018/01/23/en-musig-key-aggregation-schnorr-signatures/
+
+ * musig2: https://medium.com/blockstream/musig2-simple-two-round-schnorr-multisignatures-bf9582e99295
+
+ * adaptor sigs: https://github.com/ElementsProject/scriptless-scripts/blob/master/md/atomic-swap.md
+
  * fast forwards [ZmnSCPxj]
     https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/001986.html
     https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-May/003043.html
+    https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/003265.html
+
  * revocable signatures [LLFourn]
     https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/002785.html
 
