@@ -105,7 +105,7 @@ We'll introduce four layers of transactions:
 Funding transaction
 ===================
 
-The funding transaction simply pays to P/0/i via taproot, where i starts
+The funding transaction simply pays to P/0/f via taproot, where f starts
 at 0 and increases any time the funding transaction is updated onchain
 (eg when splicing funds in or out).
 
@@ -353,8 +353,12 @@ transaction) are:
 Misc
 ====
 
+In order to transition from BOLT#3 format to this proposal, an onchain
+transaction is required, as the "revocable signatures" arrangement cannot
+be mimicked via the existing 2-of-2 CHECKMULTISIG output.
+
 To allow splicing in/out, it may be important to maintain multiple
-concurrent funding transactions (paying to P/0/i and P/0/i+1 eg),
+concurrent funding transactions (paying to P/0/f and P/0/f+1 eg),
 which then requires maintaining multiple current balance transactions
 (paying to P/1/n/* and P/1/n+1/x eg) and likewise multiple current
 inflight/layered transactions. This will require ensuring the states
@@ -372,6 +376,12 @@ Bob having a current inflight transaction spending Alice's balance is
 advantageous to Alice as Bob posting the inflight transaction allows
 her to immediately claim her balance, rather than having to wait for
 the delay to complete.
+
+If two nodes agree to only forward ptlcs in future, then updating the
+funding transaction (to P/0/f+1 eg) and ignoring any proposed inflight
+transactions that include htlc outputs is enough to ensure that all htlc
+records can be forgotten without risking any part of the channel balance
+being unclaimable.
 
 References
 ==========
