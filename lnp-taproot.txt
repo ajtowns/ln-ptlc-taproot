@@ -325,6 +325,31 @@ Note that Bob never shares his signature to spend Alice's balance prior
 to posting the inflight transaction, so Alice can never post an inflight
 transaction that spends her own balance.
 
+The cases where Alice may have difficulty claiming funds is Bob posts
+a revoked inflight transaction (possibly spending a revoked balance
+transaction) are:
+
+ * if the inflight transaction contains a htlc output, then if Alice
+   has not retained the old htlc details (the hash160 and the timeout)
+   she will not be able to reconstruct the script path, and thus will
+   not be able to calculate the TapTweak to sign for the key path.
+   However if Bob attempts to claim the output (via the pre-signed
+   layered transaction), that will reveal the information she was missing,
+   and she can immediately claim the funds via the layered transaction
+   output, prior to Bob being able to spend that output.
+
+ * if the inflight transaction contains a ptlc output, then if Alice
+   has not retained the old ptlc details (the point and the timeout)
+   she will not trivially be able to reconstruct the script path,
+   which includes the timeout. However, presuming the timeout was
+   within 5000 blocks, then the only possible timeouts are the inflight
+   tx's nlocktime+i with 0<i<=5000, and she will only need to calculate
+   5000*k cases and match the corresponding scriptPubKeys to exhaustively
+   enumerate every possible ptlc output, which should take under a minute,
+   and be easily achievable. In addition, if Bob attempts to claim the
+   funds, he will reveal the script path, and Alice will be either able
+   to claim the inflight output directly or the layered output.
+
 Misc
 ====
 
