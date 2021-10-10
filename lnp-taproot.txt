@@ -139,18 +139,19 @@ First, nonces are exchanged in advance:
 Then, presuming Alice initiates the update:
 
   Alice:
-    Generates deterministic nonce pair, DA1, DA2. Combines this with
-    Bob's NB1, NB2 nonce pair.  Generates partial signature for nonce
-    (DA, NB) for the transaction. Sends DA1 and DA2 and the partial
-    signature to Bob.
+    Generates deterministic nonce pair, DA1, DA2, based on Bob's nonce
+    pair NB1, NB2, the message to be signed, and some private seed (eg her
+    private key). Combines this with Bob's NB1, NB2 nonce pair.  Generates
+    partial signature for nonce (DA, NB) for the transaction. Sends DA1
+    and DA2 and the partial signature to Bob.
 
   Bob:
     Checks the partial signature is valid. Updates to the new balance
-    transaction. Generates a nonce pair, DB1, DB2, and gnerates a partial
-    signature for the balance transaction for nonce (NA, DB). Sends DB1,
-    DB2, and the partial signature to Alice. Generates a new revocable
-    secret RB(n+1). Revokes the previous secret RB(n) and sends the
-    details of both to Alice.
+    transaction. Generates a nonce pair, DB1, DB2, in the same way Alice
+    did and gnerates a partial signature for the balance transaction
+    for nonce (NA, DB). Sends DB1, DB2, and the partial signature to
+    Alice. Generates a new revocable secret RB(n+1). Revokes the previous
+    secret RB(n) and sends the details of both to Alice.
 
   Alice:
     Checks the partial signature is valid. Updates to the new balance
