@@ -408,3 +408,6 @@ but here's references for a bunch of the concepts.
  * revocable signatures [LLFourn]
     https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/002785.html
 
+Mailing list thread is at:
+
+  https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/003278.html
