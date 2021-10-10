@@ -182,7 +182,7 @@ has the secret revocation information, and verified that it correctly
 generated the nonces Bob was using), which allows her to calculate Bob's
 private key using modular arithmetic:
 
-   b = H(R,P,m) / (s - (DA1+NB1) - b(DA2+NB2)) - a
+   b = H(R,P,m) / (s - (DA1+NB1) - k(DA2+NB2)) - a
 
 which means she can then directly sign without Bob's assistance, allowing
 her to claim any funds.
