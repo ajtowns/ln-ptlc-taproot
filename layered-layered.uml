@@ -1,0 +1,40 @@
+@startuml
+title State channels with layered-txs
+
+database Blockchain
+participant Alice
+participant Bob
+participant Carol
+
+== Setup ==
+
+Alice -> Bob : add_htlc(R, Talice)
+Bob -> Carol : add_htlc(R, Tbob)
+
+== Bob wants to expire the htlc ==
+
+note across: height = Tbob - grace
+Bob -> Carol : drop_htlc(R, Tbob)
+Carol ->X Bob : (no response)
+note across: height = Tbob
+Bob -> Blockchain : post unilateral close (Bob/Carol)
+Bob -> Blockchain : post pay-to-self timeout layered tx
+note across: height = Tbob + confirm_delay
+Blockchain --> Bob : confirmed
+
+== Alice wants to expire the htlc ==
+
+note across: height = Talice - grace
+Alice -> Bob: drop_htlc(R, Talice)
+Bob -> Alice: ack
+
+hnote across #aqua
+Note, Bob must set
+
+Tbob < Talice - confirm_delay - grace
+
+in order to know his funds are reclaimed from Carol
+prior to sending the ack to Alice.
+end note
+
+@enduml
