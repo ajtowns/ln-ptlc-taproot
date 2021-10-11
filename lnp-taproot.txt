@@ -212,17 +212,17 @@ types of outputs:
  * Bob's remaining balances: pays to RP/2 with script path
    "<B/2/n/i> CHECKSIGVERIFY <D> CSV"
 
- * An htlc paying to Bob: pays to RP/2/k with script paths:
-   + "LENGTH 32 EQUALVERIFY HASH160 <X> EQUALVERIFY <B/2/n/i/k> CHECKSIGVERIFY <A/2/n/i/k> CHECKSIG"
-   + "<A/2/n/i/k/1> CHECKSIGVERIFY <T> CLTV"
+ * An htlc paying to Bob: pays to RP/2/c with script paths:
+   + "LENGTH 32 EQUALVERIFY HASH160 <X> EQUALVERIFY <B/2/n/i/c> CHECKSIGVERIFY <A/2/n/i/c> CHECKSIG"
+   + "<A/2/n/i/c/1> CHECKSIGVERIFY <T> CLTV"
 
- * A ptlc paying to Bob: pays to RP/2/k with script paths:
-   + "<B/2/n/i/k> CHECKSIG NOTIF <T> CLTV DROP ENDIF <A/2/n/i/k> CHECKSIG"
+ * A ptlc paying to Bob: pays to RP/2/c with script paths:
+   + "<B/2/n/i/c> CHECKSIG NOTIF <T> CLTV DROP ENDIF <A/2/n/i/c> CHECKSIG"
 
 Any outputs that would be zero or dust are not included.
 
-Note that we number each currently inflight transaction by "k",
-starting at 0. The same htlc/ptlc may have a different value for k
+Note that we number each currently inflight htlc/ptlc by "c",
+starting at 0. The same htlc/ptlc may have a different value for c
 between different inflight transactions.
 
 The inflight transation's locktime is set to the current block
@@ -237,11 +237,11 @@ The balance input's nsequence is used to encode the value of the lower
 nsequence encodes the upper 24 bits of n.
 
 The layered transaction will spend the htlc/ptlc outputs, with an
-ANYONECANPAY|SINGLE signature by Alice using the A/2/n/i/k path.
+ANYONECANPAY|SINGLE signature by Alice using the A/2/n/i/c path.
 The output committed to is:
 
- * pays to RP/3/k with script path:
-   + <B/3/n/i/k> CHECKSIGVERIFY <D> CSV
+ * pays to RP/3/c with script path:
+   + <B/3/n/i/c> CHECKSIGVERIFY <D> CSV
 
 with no absolute or relative locktime.
 
@@ -257,8 +257,8 @@ any dependent layered transactions, the process is as follows:
     Calculates the new inflight transaction. Calculates new nonces NA1,
     NA2, and partially signs the spend of her balance via the key path,
     with musig2 nonces NA1, NB1, NA2, NB2. For each inflight htlc,
-    Alice provides a signature via A/2/n/i/k. For each inflight ptlc,
-    Alice provides an adaptor signature via the A/2/n/i/k/0 path that
+    Alice provides a signature via A/2/n/i/c. For each inflight ptlc,
+    Alice provides an adaptor signature via the A/2/n/i/c/0 path that
     is conditional on the ptlc's point.
 
   Bob:
@@ -310,7 +310,7 @@ following ways:
    the nsequence (using brute force for the upper bits if she has
    provided more than 16M updates of the inflight tx for any given
    balance transaction), and then calculates the secret key for PB,
-   and hence PB/2/k and PB/3/k, at which point she can claim every
+   and hence PB/2/c and PB/3/c, at which point she can claim every
    output via a key path spend, even if Bob posts some or all of the
    layered transactions. Alice gets the entire balance in this case
    (though spends more on fees).
@@ -345,7 +345,7 @@ transaction) are:
    which includes the timeout. However, presuming the timeout was
    within 5000 blocks, then the only possible timeouts are the inflight
    tx's nlocktime+i with 0<i<=5000, and she will only need to calculate
-   5000*k cases and match the corresponding scriptPubKeys to exhaustively
+   5000*c cases and match the corresponding scriptPubKeys to exhaustively
    enumerate every possible ptlc output, which should take under a minute,
    and be easily achievable. In addition, if Bob attempts to claim the
    funds, he will reveal the script path, and Alice will be either able
